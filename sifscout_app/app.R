@@ -89,10 +89,23 @@ server <- function(input, output) {
       rates <- filter(rt, type==input$tab, subtype==switch(input$btype, "SR 80%, UR 20%"=1, "SSR 80%, UR 20%"=2)) #df of rates in the order N, SR, SSR, UR
     }
     p <- ifelse(input$usesp, input$sprate/100, 1)*filter(rates, rarity==input$rare)[1,"rate"]
-    pfun <- eval(parse(text=paste0(ifelse(input$mode=="exactly equal to", "d", "p"),
+    pfun <- function(x, param, p) {
+      xtot <- (x*as.numeric(input$number))-switch(input$mode, "Scouting until a certain number of a specific card (or card rarity) is obtained."=param,
+                                    "Set number of scouts."=0)
+      fun <- eval(parse(text=paste0(ifelse(input$rule=="exactly equal to", "d", "p"),
                                    switch(input$mode, "Scouting until a certain number of a specific card (or card rarity) is obtained."="nbinom",
                                           "Set number of scouts."="binom"))))
-    prob <- pfun(input$x, input$param, lower.tail=FALSE)
+      if (input$rule=="exactly equal to") {
+        return(fun(xtot, param, prob=p))
+      } else {
+        return(fun(xtot-switch(input$rule, "at least"=1, "at most"=0), param, prob=p, lower.tail=switch(input$rule, "at least"=FALSE, "at most"=TRUE)))
+      }
+    }
+    print(input$x)
+    print(input$param)
+    print(p)
+    print(input$number)
+    return(pfun(input$x, input$param, p))
   })
 }
 
