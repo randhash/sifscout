@@ -1,0 +1,10 @@
+name: sifscout_app
+title:
+username:
+account: llorente
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 1043778
+bundleId: 2252664
+url: https://llorente.shinyapps.io/sifscout_app/
+when: 1563738618.01568

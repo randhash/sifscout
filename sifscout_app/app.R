@@ -1,18 +1,23 @@
 library(shiny)
 library(dplyr)
+library(magrittr)
 
-rt <- readRDS("data\\rates.rds")
-disp <- readRDS("data\\disprates.rds")
+rt <- readRDS("data/rates.rds")
+disp <- readRDS("data/disprates.rds")
 
 ui <- fluidPage(
   titlePanel("sifscout"),
   sidebarPanel(
     tabsetPanel(type="pills", id="tab",
-              tabPanel("Honor", value=1),
-              tabPanel("Regular", value=2),
+              tabPanel("Honor", value=1,
+                       tableOutput("odds1")),
+              tabPanel("Regular", value=2,
+                       tableOutput("odds2")),
               tabPanel("Scouting Coupon (SR 20%, UR 80%)", value=3,
-                       helpText('Note: This is identical to SSR 80%, UR 20% if you treat SR as SSR.')),
-              tabPanel("Scouting Coupon (Supporting Members)", value=4),
+                       helpText('Note: This is identical to SSR 80%, UR 20% if you treat SR as SSR.'),
+                       tableOutput("odds3")),
+              tabPanel("Scouting Coupon (Supporting Members)", value=4,
+                       tableOutput("odds4")),
               tabPanel("Custom", value=5,
                        numericInput("c.n", label="N rate (%)", value=NA, min=0, max=100),
                        numericInput("c.r", label="R rate (%)", value=NA, min=0, max=100),
@@ -22,8 +27,6 @@ ui <- fluidPage(
                        actionButton("c.auto", label="Autofill empty rates uniformly"),
                        actionButton("c.clear", label="Clear rates", inline=TRUE))
   ),
-  uiOutput("btypeentry"),
-  dataTableOutput("odds"),
   hr(),
   uiOutput("scoutno"),
   selectInput("rare", label="Target card rarity:", choices=c("UR", "SSR", "SR", "R", "N")),
@@ -80,10 +83,10 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   #First column
   #Set the correct rate vector display when inputs are submitted
-  output$odds <- renderDataTable({
-    df <- filter(disp, type==input$tab) #df of rates in the order N, SR, SSR, UR
-    select(df, Rarity, `Rate (%)`)
-    }, options=list(searching=FALSE, paging=FALSE, dom="t", ordering=FALSE))
+  output$odds1 <- renderTable(select(filter(disp, type==1), Rarity, `Rate (%)`), align="l")
+  output$odds2 <- renderTable(select(filter(disp, type==2), Rarity, `Rate (%)`), align="l")
+  output$odds3 <- renderTable(select(filter(disp, type==3), Rarity, `Rate (%)`), align="l")
+  output$odds4 <- renderTable(select(filter(disp, type==4), Rarity, `Rate (%)`), align="l")
   #Set the correct number of scouts
   output$scoutno <- renderUI({
     selectInput("number", label="Scout:", choices=c(switch(input$tab, "1"=11, "2"=10, "5"=11), 1))
@@ -95,9 +98,6 @@ server <- function(input, output, session) {
                                        "Set number of scouts."="Number of scouts:"),
                  value=1, min=1, step=1)
     })
-  output$bt <- renderUI({
-    selectInput("btype", label="", choices=c())
-  })
   #Make the specific card rate entry appear and disappear
   observe({
     if (input$usesp) {
@@ -150,7 +150,7 @@ server <- function(input, output, session) {
     if (input$mode=="Scouting until a certain number of a specific card (or card rarity) is obtained.") {
       if (p<=0.01|as.numeric(input$number)==1|(switch(input$rule,
                                                      "at least"=is_greater_than,
-                                                     "at most"=is_less_than)(input$param, input$x))) {
+                                                     "at most"=is_less_than, function(...) FALSE)(input$param, input$x))) {
         pp <- ifelse(as.numeric(input$number)==1, p, 1-(1-p)^as.numeric(input$number))
         if (input$rule=="exactly equal to") {
           return(dnbinom(input$x-input$param, size=input$param, prob=pp))
@@ -158,8 +158,9 @@ server <- function(input, output, session) {
           return(pnbinom(input$x-input$param-switch(input$rule, "at least"=1, "at most"=0), size=input$param, prob=pp, lower.tail=switch(input$rule, "at least"=FALSE, "at most"=TRUE)))
         }
       } else {
-        sim_pulls <- c()
-        for (i in 1:3000) {
+        runs <- 3000
+        sim_pulls <- numeric(runs)
+        for (i in 1:runs) {
           j <- 0
           k <- 0
           while(k<input$param) {
@@ -167,7 +168,7 @@ server <- function(input, output, session) {
             pull <- rbinom(1, as.numeric(input$number), prob=p)
             k <- k+pull
           }
-          sim_pulls <- c(sim_pulls, j)
+          sim_pulls[i] <- j
         }
         return(mean(switch(input$rule,
                            "at least"=is_weakly_greater_than,
