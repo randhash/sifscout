@@ -1,8 +1,8 @@
 library(shiny)
 library(dplyr)
 
-rt <- readRDS("C:\\Users\\Bearkey\\Documents\\Anime\\sifscout\\rates.rds")
-disp <- readRDS("C:\\Users\\Bearkey\\Documents\\Anime\\sifscout\\disprates.rds")
+rt <- readRDS("data\\rates.rds")
+disp <- readRDS("data\\disprates.rds")
 
 ui <- fluidPage(
   titlePanel("sifscout"),
@@ -10,9 +10,17 @@ ui <- fluidPage(
     tabsetPanel(type="pills", id="tab",
               tabPanel("Honor", value=1),
               tabPanel("Regular", value=2),
-              tabPanel("Scouting Coupon (SR, SSR, UR Only!)", value=3,
-                       selectInput("btype", label="Type:", choices=c("SR 80%, UR 20%", "SSR 80%, UR 20%"))),
-              tabPanel("Scouting Coupon (Supporting Members)", value=4)
+              tabPanel("Scouting Coupon (SR 20%, UR 80%)", value=3,
+                       helpText('Note: This is identical to SSR 80%, UR 20% if you treat SR as SSR.')),
+              tabPanel("Scouting Coupon (Supporting Members)", value=4),
+              tabPanel("Custom", value=5,
+                       numericInput("c.n", label="N rate (%)", value=NA, min=0, max=100),
+                       numericInput("c.r", label="R rate (%)", value=NA, min=0, max=100),
+                       numericInput("c.sr", label="SR rate (%)", value=NA, min=0, max=100),
+                       numericInput("c.ssr", label="SSR rate (%)", value=NA, min=0, max=100),
+                       numericInput("c.ur", label="UR rate (%)", value=NA, min=0, max=100),
+                       actionButton("c.auto", label="Autofill empty rates uniformly"),
+                       actionButton("c.clear", label="Clear rates", inline=TRUE))
   ),
   uiOutput("btypeentry"),
   dataTableOutput("odds"),
@@ -48,6 +56,7 @@ ui <- fluidPage(
     numericInput("lu.sr", label="SR cards remaining", value=15, min=0, step=1),
     numericInput("lu.ssr", label="SSR cards remaining", value=4, min=0, step=1),
     numericInput("lu.ur", label="Ltd. UR cards remaining", value=1, min=0, step=1),
+    actionButton("lu.rd", label="Restore defaults"),
     hr(),
     selectInput("lu.number", label="Scout:", choices=c(11, 1)),
     selectInput("lu.rare", label="Target card rarity", choices=c("Ltd. UR", "SSR", "SR", "R", "N")),
@@ -68,15 +77,11 @@ ui <- fluidPage(
     )
 )
 
-server <- function(input, output) {
+server <- function(input, output, session) {
   #First column
   #Set the correct rate vector display when inputs are submitted
   output$odds <- renderDataTable({
-    if (input$tab!=3) {
-      df <- filter(disp, type==input$tab)
-    } else {
-      df <- filter(disp, type==input$tab, subtype==switch(input$btype, "SR 80%, UR 20%"=1, "SSR 80%, UR 20%"=2)) #df of rates in the order N, SR, SSR, UR
-    }
+    df <- filter(disp, type==input$tab) #df of rates in the order N, SR, SSR, UR
     select(df, Rarity, `Rate (%)`)
     }, options=list(searching=FALSE, paging=FALSE, dom="t", ordering=FALSE))
   #Set the correct number of scouts
@@ -110,22 +115,42 @@ server <- function(input, output) {
                                            "Scouting until a certain number of a specific card (or card rarity) is obtained."="scouts",
                                            "Set number of scouts."="successful pulls"), "is"), choices=c("at least", "exactly equal to", "at most"))
   })
+  #Autofill custom rates
+  observeEvent(input$c.auto, {
+    rv <- c(input$c.n, input$c.r, input$c.sr, input$c.ssr, input$c.ur)
+    each <- (100-sum(rv, na.rm=TRUE))/sum(is.na(rv))
+    if (is.na(input$c.n)) updateNumericInput(session, "c.n", value=each)
+    if (is.na(input$c.r)) updateNumericInput(session, "c.r", value=each)
+    if (is.na(input$c.sr)) updateNumericInput(session, "c.sr", value=each)
+    if (is.na(input$c.ssr)) updateNumericInput(session, "c.ssr", value=each)
+    if (is.na(input$c.ur)) updateNumericInput(session, "c.ur", value=each)
+  })
+  #Clear custom rates
+  observeEvent(input$c.clear, {
+    updateNumericInput(session, "c.n", value=NA)
+    updateNumericInput(session, "c.r", value=NA)
+    updateNumericInput(session, "c.sr", value=NA)
+    updateNumericInput(session, "c.ssr", value=NA)
+    updateNumericInput(session, "c.ur", value=NA)
+  })
+  #Compute result
   result <- eventReactive(input$submit, {
-    if (input$tab==5) {
-      
-    }
     validate(
-      need((input$param %% 1)==0, "Number of scouts/pulls must be an integer."),
-      need((input$x %% 1)==0, "Number of scouts/pulls must be an integer.")
+      need(all((c(input$param, input$x) %% 1)==0), "Number of scouts/pulls must be an integer.")
     )
-    if (input$tab!=3) {
-      rates <- filter(rt, type==input$tab)
+    if (input$tab==5) {
+      rate <- c(input$c.n, input$c.r, input$c.sr, input$c.ssr, input$c.ur)[which(c("N", "R", "SR", "SSR", "UR")==input$rare)]/100
+      validate(
+        need(!is.na(rate), "Fill in the required rate.")
+      )
     } else {
-      rates <- filter(rt, type==input$tab, subtype==switch(input$btype, "SR 80%, UR 20%"=1, "SSR 80%, UR 20%"=2)) #df of rates in the order N, SR, SSR, UR
+      rate <- filter(rt, type==input$tab, rarity==input$rare)[1,"rate"]
     }
-    p <- ifelse(input$usesp, input$sprate/100, 1)*filter(rates, rarity==input$rare)[1,"rate"]
+    p <- ifelse(input$usesp, input$sprate/100, 1)*rate
     if (input$mode=="Scouting until a certain number of a specific card (or card rarity) is obtained.") {
-      if ((p/0.001)<10|as.numeric(input$number)==1) {
+      if (p<=0.01|as.numeric(input$number)==1|(switch(input$rule,
+                                                     "at least"=is_greater_than,
+                                                     "at most"=is_less_than)(input$param, input$x))) {
         pp <- ifelse(as.numeric(input$number)==1, p, 1-(1-p)^as.numeric(input$number))
         if (input$rule=="exactly equal to") {
           return(dnbinom(input$x-input$param, size=input$param, prob=pp))
@@ -151,15 +176,16 @@ server <- function(input, output) {
       }
     } else {
       if (input$rule=="exactly equal to") {
-        return(dbinom(input$x-input$param, size=input$param, prob=p))
+        return(dbinom(input$x, size=input$param*as.numeric(input$number), prob=p))
       } else {
-        return(pbinom(input$x-input$param-switch(input$rule, "at least"=1, "at most"=0), size=input$param, prob=p, lower.tail=switch(input$rule, "at least"=FALSE, "at most"=TRUE)))
+        return(pbinom(input$x-switch(input$rule, "at least"=1, "at most"=0), size=input$param*as.numeric(input$number), prob=p, lower.tail=switch(input$rule, "at least"=FALSE, "at most"=TRUE)))
       }    
     }
   })
   output$result <- reactive({paste0(result()*100, "%")})
   
   #Second column
+  #Specific card rate
   observe({
     if (input$lu.usesp) {
       output$lu.rtentry <- renderUI({
@@ -169,15 +195,20 @@ server <- function(input, output) {
       removeUI(".shiny-input-container:has(#lusprate)")
     }
   })
+  #Restore defaults
+  observeEvent(input$lu.rd, {
+    updateNumericInput(session, "lu.n", value=0)
+    updateNumericInput(session, "lu.r", value=80)
+    updateNumericInput(session, "lu.sr", value=15)
+    updateNumericInput(session, "lu.ssr", value=4)
+    updateNumericInput(session, "lu.ur", value=1)
+  })
+  #Compute the result
   lu.result <- eventReactive(input$lu.submit, {
-    validate(
-      need((input$lu.n %% 1)==0, "Remaining cards must be integers."),
-      need((input$lu.r %% 1)==0, "Remaining cards must be integers."),
-      need((input$lu.sr %% 1)==0, "Remaining cards must be integers."),
-      need((input$lu.ssr %% 1)==0, "Remaining cards must be integers."),
-      need((input$lu.ur %% 1)==0, "Remaining cards must be integers.")
-    )
     vec <- c(input$lu.n, input$lu.r, input$lu.sr, input$lu.ssr, input$lu.ur)
+    validate(
+      need(all((vec %% 1)==0), "Remaining cards must be integers.")
+    )
     total <- sum(vec)
     pool <- vec[which(c("N", "R", "SR", "SSR", "Ltd. UR")==input$lu.rare)]
     if (input$lu.rule=="exactly equal to") {

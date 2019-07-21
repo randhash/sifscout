@@ -2,12 +2,12 @@ library(ggplot2)
 library(dplyr)
 library(magrittr)
 
-target <- 1
-rate <- 0.04
+target <- 2
+rate <- 0.01
 
 #Simulation
 sim_pulls <- c()
-for (i in 1:6000) {
+for (i in 1:10000) {
   j <- 0
   k <- 0
   while(k<target) {
