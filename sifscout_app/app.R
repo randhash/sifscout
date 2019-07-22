@@ -20,13 +20,14 @@ ui <- fluidPage(
               tabPanel("Scouting Coupon (Supporting Members)", value=4,
                        tableOutput("odds4")),
               tabPanel("Custom", value=5,
-                       numericInput("c.n", label="N rate (%)", value=NA, min=0, max=100),
-                       numericInput("c.r", label="R rate (%)", value=NA, min=0, max=100),
-                       numericInput("c.sr", label="SR rate (%)", value=NA, min=0, max=100),
-                       numericInput("c.ssr", label="SSR rate (%)", value=NA, min=0, max=100),
-                       numericInput("c.ur", label="UR rate (%)", value=NA, min=0, max=100),
+                       numericInput("c.n", label="N rate (%)", value=0, min=0, max=100),
+                       numericInput("c.r", label="R rate (%)", value=80, min=0, max=100),
+                       numericInput("c.sr", label="SR rate (%)", value=15, min=0, max=100),
+                       numericInput("c.ssr", label="SSR rate (%)", value=4, min=0, max=100),
+                       numericInput("c.ur", label="UR rate (%)", value=1, min=0, max=100),
                        actionButton("c.auto", label="Autofill empty rates uniformly"),
-                       actionButton("c.clear", label="Clear rates", inline=TRUE))
+                       actionButton("c.clear", label="Clear rates", inline=TRUE)
+                       )
   ),
   hr(),
   uiOutput("scoutno"),
@@ -62,7 +63,7 @@ ui <- fluidPage(
     numericInput("lu.ur", label="Ltd. UR cards remaining", value=1, min=0, step=1),
     actionButton("lu.rd", label="Restore defaults"),
     hr(),
-    selectInput("lu.number", label="Scout:", choices=c(11, 1)),
+    selectInput("lu.number", label="Scout:", choices=c(11, 10, 1)),
     selectInput("lu.rare", label="Target card rarity", choices=c("Ltd. UR", "SSR", "SR", "R", "N")),
     checkboxInput("lu.usesp", label="[Optional] Use specific card rate?"),
     helpText('Note: Use this option if you are scouting for a specific card',
@@ -78,7 +79,35 @@ ui <- fluidPage(
     br(),
     br(),
     actionButton(inputId="lu.submit", label="Submit")
-    )
+    ),
+  sidebarPanel(
+    h3("Step-Up"),
+    numericInput("st.n", label="N rate (%)", value=0, min=0, max=100),
+    numericInput("st.r", label="R rate (%)", value=80, min=0, max=100),
+    numericInput("st.sr", label="SR rate (%)", value=15, min=0, max=100),
+    numericInput("st.ssr", label="SSR rate (%)", value=4, min=0, max=100),
+    numericInput("st.ur", label="UR rate (%)", value=1, min=0, max=100),
+    actionButton("st.auto", label="Autofill empty rates uniformly"),
+    actionButton("st.clear", label="Clear rates", inline=TRUE),
+    hr(),
+    selectInput("st.gr", label="Guaranteed:", choices=c("nothing", "SR", "SSR")),
+    uiOutput("st.grnumentry"),
+    helpText('Note: Above number is ignored if "nothing" is guaranteed.'),
+    selectInput("st.rare", label="Target card rarity:", choices=c("UR", "SSR", "SR", "R", "N")),
+    checkboxInput("st.usesp", label="[Optional] Use specific card rate?"),
+    helpText('Note: Use this option if you are scouting for a specific card',
+             'with a known pull rate. This is the "Appearance rate per member"',
+             'in a specific card rarity class that may be found in the details',
+             'page in the specific SIF page.'),
+    uiOutput("st.rtentry"),
+    hr(),
+    selectInput("st.rule", label="The probability that the number of successful pulls in an 11 scout is", choices=c("at least", "exactly equal to", "at most")),
+    numericInput("st.x", label="this number:", value=1, min=1, step=1),
+    strong("is", style="display:inline"),
+    br(),
+    br(),
+    actionButton("st.submit", label="Submit")
+  )
 )
 
 server <- function(input, output, session) {
@@ -211,7 +240,7 @@ server <- function(input, output, session) {
   lu.result <- eventReactive(input$lu.submit, {
     vec <- c(input$lu.n, input$lu.r, input$lu.sr, input$lu.ssr, input$lu.ur)
     validate(
-      need(all((vec %% 1)==0), "Remaining cards must be integers.")
+      need(all((c(vec, input$lu.x) %% 1)==0), "Remaining cards and target value must be integers.")
     )
     total <- sum(vec)
     pool <- vec[which(c("N", "R", "SR", "SSR", "Ltd. UR")==input$lu.rare)]
@@ -225,7 +254,67 @@ server <- function(input, output, session) {
     }
     return(res)
   })
-  output$lu.result <- reactive({paste0(lu.result()*100, "%")})
+  output$lu.result <- reactive({paste0(lu.result()*100, "% (exact)")})
+  
+  #Third column
+  #Step-Up guaranteed
+  output$st.grnumentry <- renderUI({
+    numericInput("st.grnum", label="Number of guaranteed pulls of above rarity:", value=switch(input$st.gr, "nothing"=NA, 1), min=0, step=1)
+  })
+  #Autofill custom rates
+  observeEvent(input$st.auto, {
+    rv <- c(input$st.n, input$st.r, input$st.sr, input$st.ssr, input$st.ur)
+    each <- (100-sum(rv, na.rm=TRUE))/sum(is.na(rv))
+    if (is.na(input$st.n)) updateNumericInput(session, "st.n", value=each)
+    if (is.na(input$st.r)) updateNumericInput(session, "st.r", value=each)
+    if (is.na(input$st.sr)) updateNumericInput(session, "st.sr", value=each)
+    if (is.na(input$st.ssr)) updateNumericInput(session, "st.ssr", value=each)
+    if (is.na(input$st.ur)) updateNumericInput(session, "st.ur", value=each)
+  })
+  #Clear custom rates
+  observeEvent(input$st.clear, {
+    updateNumericInput(session, "st.n", value=NA)
+    updateNumericInput(session, "st.r", value=NA)
+    updateNumericInput(session, "st.sr", value=NA)
+    updateNumericInput(session, "st.ssr", value=NA)
+    updateNumericInput(session, "st.ur", value=NA)
+  })
+  #Specific card rate
+  observe({
+    if (input$st.usesp) {
+      output$st.rtentry <- renderUI({
+        numericInput("stsprate", label="Specific card rate (%):", value=NA, min=0, max=100)
+      })
+    } else {
+      removeUI(".shiny-input-container:has(#stsprate)")
+    }
+  })
+  #Compute results
+  st.result <- eventReactive(input$st.submit, {
+    rv <- c(input$st.n, input$st.r, input$st.sr, input$st.ssr, input$st.ur)
+    index <- which(rarities==input$st.rare)
+    rate <- rv[index]
+    validate(
+      need(!is.na(rate), "Fill in the required rate."),
+      need(all((c(input$st.grnum, input$st.x) %% 1)==0), "Number of guaranteed cards and target value must be integers.")
+    )
+    p <- ifelse(input$st.usesp, input$stsprate/100, 1)*(rate/100)
+    if (input$st.rule=="exactly equal to") {
+      raw <- dbinom(input$st.x, size=11, prob=p)
+    } else {
+      raw <- pbinom(input$st.x-switch(input$st.rule, "at least"=1, "at most"=0), size=11, prob=p)
+    }
+    if (input$gr!="nothing") {
+      grvec <- 1:input$grnum
+      sel <- switch(input$st.rule,
+             "at least"=is_weakly_greater_than,
+             "at most"=is_weakly_less_than,
+             "exactly equal to"=equals)(grvec, input$st.x)
+      if (sum(sel)==0) return(raw)
+      key <- grvec[sel]-1
+      return(sum(c(raw, dbinom(key, size=11, prob=p))))
+    }
+  })
 }
 
 shinyApp(ui=ui, server=server)
