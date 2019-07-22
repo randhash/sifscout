@@ -2,8 +2,8 @@ library(shiny)
 library(dplyr)
 library(magrittr)
 
+rarities <- c("N", "R", "SR", "SSR", "UR")
 rt <- readRDS("data/rates.rds")
-disp <- readRDS("data/disprates.rds")
 
 ui <- fluidPage(
   titlePanel("sifscout"),
@@ -83,10 +83,10 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   #First column
   #Set the correct rate vector display when inputs are submitted
-  output$odds1 <- renderTable(select(filter(disp, type==1), Rarity, `Rate (%)`), align="l")
-  output$odds2 <- renderTable(select(filter(disp, type==2), Rarity, `Rate (%)`), align="l")
-  output$odds3 <- renderTable(select(filter(disp, type==3), Rarity, `Rate (%)`), align="l")
-  output$odds4 <- renderTable(select(filter(disp, type==4), Rarity, `Rate (%)`), align="l")
+  output$odds1 <- renderTable(data.frame(Rarity=rarities, `Rate (%)`=c(0, 80, 15, 4, 1), check.names=FALSE), align="l", width="100%")
+  output$odds2 <- renderTable(data.frame(Rarity=rarities, `Rate (%)`=c(94, 5, 0, 1, 0), check.names=FALSE), align="l", width="100%")
+  output$odds3 <- renderTable(data.frame(Rarity=rarities, `Rate (%)`=c(0, 0, 80, 0, 20), check.names=FALSE), align="l", width="100%")
+  output$odds4 <- renderTable(data.frame(Rarity=rarities, `Rate (%)`=c(0, 60, 30, 0, 10), check.names=FALSE), align="l", width="100%")
   #Set the correct number of scouts
   output$scoutno <- renderUI({
     selectInput("number", label="Scout:", choices=c(switch(input$tab, "1"=11, "2"=10, "5"=11), 1))
@@ -134,31 +134,24 @@ server <- function(input, output, session) {
     updateNumericInput(session, "c.ur", value=NA)
   })
   #Compute result
+  dsc <- reactiveVal()
   result <- eventReactive(input$submit, {
     validate(
       need(all((c(input$param, input$x) %% 1)==0), "Number of scouts/pulls must be an integer.")
     )
     if (input$tab==5) {
-      rate <- c(input$c.n, input$c.r, input$c.sr, input$c.ssr, input$c.ur)[which(c("N", "R", "SR", "SSR", "UR")==input$rare)]/100
+      rate <- c(input$c.n, input$c.r, input$c.sr, input$c.ssr, input$c.ur)[which(rarities==input$rare)]/100
       validate(
         need(!is.na(rate), "Fill in the required rate.")
       )
     } else {
       rate <- filter(rt, type==input$tab, rarity==input$rare)[1,"rate"]
     }
+    dsc("exact")
     p <- ifelse(input$usesp, input$sprate/100, 1)*rate
     if (input$mode=="Scouting until a certain number of a specific card (or card rarity) is obtained.") {
-      if (p<=0.01|as.numeric(input$number)==1|(switch(input$rule,
-                                                     "at least"=is_greater_than,
-                                                     "at most"=is_less_than, function(...) FALSE)(input$param, input$x))) {
-        pp <- ifelse(as.numeric(input$number)==1, p, 1-(1-p)^as.numeric(input$number))
-        if (input$rule=="exactly equal to") {
-          return(dnbinom(input$x-input$param, size=input$param, prob=pp))
-        } else {
-          return(pnbinom(input$x-input$param-switch(input$rule, "at least"=1, "at most"=0), size=input$param, prob=pp, lower.tail=switch(input$rule, "at least"=FALSE, "at most"=TRUE)))
-        }
-      } else {
-        runs <- 3000
+      if ((p>0.01 & as.numeric(input$number)!=1)|(input$rule=="at most" & input$x<input$param)) {
+        runs <- 1000
         sim_pulls <- numeric(runs)
         for (i in 1:runs) {
           j <- 0
@@ -170,10 +163,19 @@ server <- function(input, output, session) {
           }
           sim_pulls[i] <- j
         }
+        dsc(paste("approximation by simulation of", runs, "scouts"))
         return(mean(switch(input$rule,
                            "at least"=is_weakly_greater_than,
                            "at most"=is_weakly_less_than,
                            "exactly equal to"=equals)(sim_pulls, input$x)))
+      } else {
+        dsc(ifelse(as.numeric(input$number)==1, "exact", "approximation by asymptotics of <=1% scout rate"))
+        pp <- ifelse(as.numeric(input$number)==1, p, 1-(1-p)^as.numeric(input$number))
+        if (input$rule=="exactly equal to") {
+          return(dnbinom(input$x-input$param, size=input$param, prob=pp))
+        } else {
+          return(pnbinom(input$x-input$param-switch(input$rule, "at least"=1, "at most"=0), size=input$param, prob=pp, lower.tail=switch(input$rule, "at least"=FALSE, "at most"=TRUE)))
+        }
       }
     } else {
       if (input$rule=="exactly equal to") {
@@ -183,7 +185,7 @@ server <- function(input, output, session) {
       }    
     }
   })
-  output$result <- reactive({paste0(result()*100, "%")})
+  output$result <- eventReactive(result(), {paste0(result()*100, "% (", isolate(dsc()), ")")})
   
   #Second column
   #Specific card rate
