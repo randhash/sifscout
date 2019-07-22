@@ -7,6 +7,7 @@ rt <- readRDS("data/rates.rds")
 
 ui <- fluidPage(
   titlePanel("sifscout"),
+  p("Created by", a("randhash", href="https://www.reddit.com/user/randhash", target="_blank")),
   sidebarPanel(
     tabsetPanel(type="pills", id="tab",
               tabPanel("Honor", value=1,
@@ -150,7 +151,7 @@ server <- function(input, output, session) {
     dsc("exact")
     p <- ifelse(input$usesp, input$sprate/100, 1)*rate
     if (input$mode=="Scouting until a certain number of a specific card (or card rarity) is obtained.") {
-      if ((p>0.01 & as.numeric(input$number)!=1)|(input$rule=="at most" & input$x<input$param)) {
+      if ((p>0.01 & as.numeric(input$number)!=1)|input$x<input$param) {
         runs <- 1000
         sim_pulls <- numeric(runs)
         for (i in 1:runs) {
