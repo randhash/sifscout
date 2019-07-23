@@ -29,6 +29,13 @@ psif <- function(x, size, prob, scout=11, lower.tail=TRUE) {
   raw <- sum(sapply(1:x, dsif, size, prob, scout))
   return(abs(ifelse(lower.tail, 0, 1)-raw))
 }
+#Ltd UR box with specific card rate
+#Probability of getting a specific card in the Ltd UR box
+dlu <- function(x, m, n, k, psp) sum(dhyper(x:k, m=m, n=n, k=k)*dbinom(x, size=x:k, prob=psp))
+plu <- function(x, m, n, k, psp, lower.tail=TRUE) {
+  raw <- sum(sapply(0:x, dlu, m, n, k, psp))
+  return(abs(ifelse(lower.tail, 0, 1)-raw))
+}
 
 ui <- fluidPage(
   titlePanel("sifscout"),
@@ -280,15 +287,18 @@ server <- function(input, output, session) {
     )
     total <- sum(vec)
     pool <- vec[which(c("N", "R", "SR", "SSR", "Ltd. UR")==input$lu.rare)]
-    if (input$lu.rule=="exactly equal to") {
-      res <- dhyper(input$lu.x, m=pool, n=total-pool, k=min(as.numeric(input$lu.number)*input$lu.param, total))
-    } else {
-      res <- phyper(input$lu.x-switch(input$lu.rule, "at least"=1, "at most"=0), m=pool, n=total-pool, k=min(as.numeric(input$lu.number)*input$lu.param, total), lower.tail=switch(input$lu.rule, "at least"=FALSE, "at most"=TRUE))
-    }
     if (input$lu.usesp) {
-      res <- res*input$lusprate/100
+      if (input$lu.rule=="exactly equal to") {
+        return(dlu(input$lu.x, m=pool, n=total-pool, k=min(as.numeric(input$lu.number)*input$lu.param, total), psp=input$lusprate/100))
+      } else {
+        return(plu(input$lu.x-switch(input$lu.rule, "at least"=1, "at most"=0), m=pool, n=total-pool, k=min(as.numeric(input$lu.number)*input$lu.param, total), psp=input$lusprate/100, lower.tail=switch(input$lu.rule, "at least"=FALSE, "at most"=TRUE)))
+      }
     }
-    return(res)
+    if (input$lu.rule=="exactly equal to") {
+      return(dhyper(input$lu.x, m=pool, n=total-pool, k=min(as.numeric(input$lu.number)*input$lu.param, total)))
+    } else {
+      return(phyper(input$lu.x-switch(input$lu.rule, "at least"=1, "at most"=0), m=pool, n=total-pool, k=min(as.numeric(input$lu.number)*input$lu.param, total), lower.tail=switch(input$lu.rule, "at least"=FALSE, "at most"=TRUE)))
+    }
   })
   output$lu.result <- reactive({paste0(lu.result()*100, "% (exact by hypergeometric distribution)")})
   
