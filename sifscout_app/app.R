@@ -1,9 +1,34 @@
+library(partitions)
 library(shiny)
 library(dplyr)
 library(magrittr)
 
 rarities <- c("N", "R", "SR", "SSR", "UR")
 rt <- readRDS("data/rates.rds")
+#Functions to calculate negative binomials
+dsif <- function(x, size, prob, scout=11) {
+  partitions <- restrictedparts(size, x)
+  first <- apply(partitions, 2, function(l) choose(x-1, sum(l==0)))
+  ends <- apply(partitions, 2, function(k) unique(k[k!=0]))
+  probs <- numeric(sum(sapply(ends, length)))
+  l <- 1
+  for (i in 1:length(ends)) {
+    end <- ends[[i]]
+    vec <- partitions[,i]
+    for (j in 1:length(end)) {
+      spend <- end[j]
+      newvec <- vec[-which(vec==spend)[1]]
+      second <- factorial(sum(newvec!=0))/prod(factorial(table(newvec, exclude=0)))
+      probs[l] <- prod(c(pbinom(spend-1, size=scout, prob=prob, lower.tail=FALSE), dbinom(newvec, size=scout, prob=prob)))*second*first[i]
+      l <- l+1
+    }
+  }
+  return(sum(probs))
+}
+psif <- function(x, size, prob, scout=11, lower.tail=TRUE) {
+  raw <- sum(sapply(1:x, dsif, size, prob, scout))
+  return(abs(ifelse(lower.tail, 0, 1)-raw))
+}
 
 ui <- fluidPage(
   titlePanel("sifscout"),
@@ -65,6 +90,7 @@ ui <- fluidPage(
     hr(),
     selectInput("lu.number", label="Scout:", choices=c(11, 10, 1)),
     selectInput("lu.rare", label="Target card rarity", choices=c("Ltd. UR", "SSR", "SR", "R", "N")),
+    numericInput("lu.param", label="Number of scouts:", value=1, min=1, step=1),
     checkboxInput("lu.usesp", label="[Optional] Use specific card rate?"),
     helpText('Note: Use this option if you are scouting for a specific card',
              'with a known pull rate. This is the "Appearance rate per member"',
@@ -72,7 +98,7 @@ ui <- fluidPage(
              'page in the specific SIF page.'),
     uiOutput("lu.rtentry"),
     hr(),
-    selectInput("lu.rule", label="The probability that the number of the specified card(s) in your next Ltd. UR box scout is", choices=c("at least", "exactly equal to", "at most")),
+    selectInput("lu.rule", label="The probability that the number of the specified card(s) in your next Ltd. UR box scout(s) is", choices=c("at least", "exactly equal to", "at most")),
     numericInput("lu.x", label="this number:", value=1, min=1, step=1),
     strong("is", style="display:inline"),
     textOutput("lu.result", inline=TRUE),
@@ -90,7 +116,7 @@ ui <- fluidPage(
     actionButton("st.auto", label="Autofill empty rates uniformly"),
     actionButton("st.clear", label="Clear rates", inline=TRUE),
     hr(),
-    selectInput("st.gr", label="Guaranteed:", choices=c("nothing", "SR", "SSR")),
+    selectInput("st.gr", label="Guaranteed rarity (or above):", choices=c("nothing", "SR", "SSR")),
     uiOutput("st.grnumentry"),
     helpText('Note: Above number is ignored if "nothing" is guaranteed.'),
     selectInput("st.rare", label="Target card rarity:", choices=c("UR", "SSR", "SR", "R", "N")),
@@ -104,6 +130,7 @@ ui <- fluidPage(
     selectInput("st.rule", label="The probability that the number of successful pulls in an 11 scout is", choices=c("at least", "exactly equal to", "at most")),
     numericInput("st.x", label="this number:", value=1, min=1, step=1),
     strong("is", style="display:inline"),
+    textOutput("st.result", inline=TRUE),
     br(),
     br(),
     actionButton("st.submit", label="Submit")
@@ -177,11 +204,19 @@ server <- function(input, output, session) {
     } else {
       rate <- filter(rt, type==input$tab, rarity==input$rare)[1,"rate"]
     }
-    dsc("exact")
     p <- ifelse(input$usesp, input$sprate/100, 1)*rate
     if (input$mode=="Scouting until a certain number of a specific card (or card rarity) is obtained.") {
+      if (input$rule=="exactly equal to") {
+        res <- R.utils::withTimeout(dsif(input$x, size=input$param, prob=p), timeout=3, onTimeout="silent")
+      } else {
+        res <- R.utils::withTimeout(psif(input$x-switch(input$rule, "at least"=1, "at most"=0), size=input$param, prob=p, lower.tail=switch(input$rule, "at least"=FALSE, "at most"=TRUE)), timeout=3, onTimeout="silent")
+      }
+      if (!is.null(res)) {
+        dsc("exact by computed distribution")
+        return(res)
+      }
       if ((p>0.01 & as.numeric(input$number)!=1)|input$x<input$param) {
-        runs <- 1000
+        runs <- 2000
         sim_pulls <- numeric(runs)
         for (i in 1:runs) {
           j <- 0
@@ -199,7 +234,7 @@ server <- function(input, output, session) {
                            "at most"=is_weakly_less_than,
                            "exactly equal to"=equals)(sim_pulls, input$x)))
       } else {
-        dsc(ifelse(as.numeric(input$number)==1, "exact", "approximation by asymptotics of <=1% scout rate"))
+        dsc(ifelse(as.numeric(input$number)==1, "exact by negative binomial distribution", "approximation by asymptotics of <=1% scout rate"))
         pp <- ifelse(as.numeric(input$number)==1, p, 1-(1-p)^as.numeric(input$number))
         if (input$rule=="exactly equal to") {
           return(dnbinom(input$x-input$param, size=input$param, prob=pp))
@@ -208,6 +243,7 @@ server <- function(input, output, session) {
         }
       }
     } else {
+      dsc("exact by binomial distribution")
       if (input$rule=="exactly equal to") {
         return(dbinom(input$x, size=input$param*as.numeric(input$number), prob=p))
       } else {
@@ -245,16 +281,16 @@ server <- function(input, output, session) {
     total <- sum(vec)
     pool <- vec[which(c("N", "R", "SR", "SSR", "Ltd. UR")==input$lu.rare)]
     if (input$lu.rule=="exactly equal to") {
-      res <- dhyper(input$lu.x, m=pool, n=total-pool, k=as.numeric(input$lu.number))
+      res <- dhyper(input$lu.x, m=pool, n=total-pool, k=min(as.numeric(input$lu.number)*input$lu.param, total))
     } else {
-      res <- phyper(input$lu.x-switch(input$lu.rule, "at least"=1, "at most"=0), m=pool, n=total-pool, k=min(as.numeric(input$lu.number), total), lower.tail=switch(input$lu.rule, "at least"=FALSE, "at most"=TRUE))
+      res <- phyper(input$lu.x-switch(input$lu.rule, "at least"=1, "at most"=0), m=pool, n=total-pool, k=min(as.numeric(input$lu.number)*input$lu.param, total), lower.tail=switch(input$lu.rule, "at least"=FALSE, "at most"=TRUE))
     }
     if (input$lu.usesp) {
       res <- res*input$lusprate/100
     }
     return(res)
   })
-  output$lu.result <- reactive({paste0(lu.result()*100, "% (exact)")})
+  output$lu.result <- reactive({paste0(lu.result()*100, "% (exact by hypergeometric distribution)")})
   
   #Third column
   #Step-Up guaranteed
@@ -294,27 +330,45 @@ server <- function(input, output, session) {
     rv <- c(input$st.n, input$st.r, input$st.sr, input$st.ssr, input$st.ur)
     index <- which(rarities==input$st.rare)
     rate <- rv[index]
+    lowrate <- sum(rv[1:(index-1)])
     validate(
-      need(!is.na(rate), "Fill in the required rate."),
+      need(all(!is.na(c(rate, lowrate))), "Fill in the rates."),
       need(all((c(input$st.grnum, input$st.x) %% 1)==0), "Number of guaranteed cards and target value must be integers.")
     )
     p <- ifelse(input$st.usesp, input$stsprate/100, 1)*(rate/100)
     if (input$st.rule=="exactly equal to") {
       raw <- dbinom(input$st.x, size=11, prob=p)
     } else {
-      raw <- pbinom(input$st.x-switch(input$st.rule, "at least"=1, "at most"=0), size=11, prob=p)
+      raw <- pbinom(input$st.x-switch(input$st.rule, "at least"=1, "at most"=0), size=11, prob=p, lower.tail=switch(input$st.rule, "at least"=FALSE, "at most"=TRUE))
     }
-    if (input$gr!="nothing") {
-      grvec <- 1:input$grnum
+    if (input$st.gr==input$st.rare) {
+      grvec <- 1:input$st.grnum
       sel <- switch(input$st.rule,
-             "at least"=is_weakly_greater_than,
-             "at most"=is_weakly_less_than,
-             "exactly equal to"=equals)(grvec, input$st.x)
+                    "at least"=is_weakly_greater_than,
+                    "at most"=is_weakly_less_than,
+                    "exactly equal to"=equals)(grvec, input$st.x)
       if (sum(sel)==0) return(raw)
       key <- grvec[sel]-1
-      return(sum(c(raw, dbinom(key, size=11, prob=p))))
+      sel2 <- switch(input$st.rule,
+                           "at least"=is_weakly_greater_than,
+                           "at most"=is_weakly_less_than,
+                           "exactly equal to"=equals)(key, input$st.x)
+      adj <- ifelse(any(sel2), sum(dbinom(key[sel2], size=11, prob=p)), 0)
+      return(sum(c(raw, dbinom(key, size=11, prob=1-(lowrate/100)), -adj)))
+    } else if ((which(rarities==input$st.rare)<which(rarities==input$st.gr)) & input$st.gr!="nothing") {
+      grvec <- 12-(1:input$st.grnum)
+      sel <- switch(input$st.rule,
+                    "at least"=is_weakly_greater_than,
+                    "at most"=is_weakly_less_than,
+                    "exactly equal to"=equals)(grvec, input$st.x)
+      if (sum(sel)==0) return(raw)
+      rev <- sum(c(raw, -dbinom(grvec[sel], size=11, prob=p)))
+      return(ifelse(rev<10^(-9), 0, rev))
+    } else {
+      return(raw)
     }
   })
+  output$st.result <- reactive({paste0(st.result()*100, "% (exact by binomial distribution)")})
 }
 
 shinyApp(ui=ui, server=server)
