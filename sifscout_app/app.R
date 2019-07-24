@@ -29,8 +29,52 @@ psif <- function(x, size, prob, scout=11, lower.tail=TRUE) {
   raw <- sum(sapply(1:x, dsif, size, prob, scout))
   return(abs(ifelse(lower.tail, 0, 1)-raw))
 }
-#Ltd UR box with specific card rate
-#Probability of getting a specific card in the Ltd UR box
+#Functions to calculate step ups with specific cards
+dst <- function(x, size, prob, gr="SR", gr.num=1, psp) {
+  key <- x:size
+  index <- ifelse(gr=="nothing", Inf, which(rarities==input$st.rare))
+  grindex <- ifelse(gr=="nothing", 0, which(rarities==gr))
+  raw <- dbinom(key, size, prob)
+  spec <- dbinom(x, size=key, prob=psp)
+  if (index>grindex) {
+    return(sum(raw*spec))
+  } else if (index==grindex) {
+    raw[key<gr.num] <- 0
+    lower <- sum(rv[1:(index-1)])/100
+    higher <- 1-prob-lower
+    #Partitions for the conditions that permit you to pull below guaranteed because you pulled better
+    adj1v <- rep(0, times=length(raw))
+    if (x<gr.num) {
+      prt <- Reduce(cbind, lapply(size-intersect(1:gr.num-1, key), restrictedparts, 2))
+      prt <- cbind(prt, prt[2:1,prt[1,]!=prt[2,]])
+      prt <- rbind(size-colSums(prt), prt)
+      prt <- matrix(prt[,(prt[1,]+prt[3,])>=gr.num], nrow=3)
+      adj1 <- split(apply(prt, 2, function(k) dmultinom(k, prob=c(prob, lower, higher))), prt[1,]) %>% sapply(sum)
+      adj1v[which(key %in% as.numeric(names(adj1)))] <- adj1
+    }
+    #Partitions for the conditions that trigger guaranteed pulls
+    adj2v <- rep(0, times=length(raw))
+    if (gr.num>0) {
+      prts <- matrix(rep(0, 2), ncol=1, nrow=2)
+      if (gr.num>1) {
+        prts <- Reduce(cbind, c(list(prts), lapply(1:(gr.num-1), restrictedparts, 2)))
+      }
+      prts <- cbind(prts, prts[2:1,prts[1,]!=prts[2,]])
+      prts <- rbind(size-colSums(prts), prts)
+      adj2 <- sum(apply(prts, 2, function(k) dmultinom(k, prob=c(lower, prob, higher))))
+      adj2v[which(key==gr.num)] <- adj2
+    }
+    return(sum((raw+adj1v+adj2v)*spec))
+  } else {
+    keep <- key<(size-gr.num+1)
+    return(sum(raw*keep*spec))
+  }
+}
+pst <- function(x, size, prob, gr="SR", gr.num=1, psp, lower.tail=TRUE) {
+  raw <- sum(sapply(0:x, dst, size=size, prob=prob, gr=gr, gr.num=gr.num, psp=psp))
+  return(abs(ifelse(lower.tail, 0, 1)-raw))
+}
+#Functions for getting a specific card in the Ltd UR box
 dlu <- function(x, m, n, k, psp) sum(dhyper(x:k, m=m, n=n, k=k)*dbinom(x, size=x:k, prob=psp))
 plu <- function(x, m, n, k, psp, lower.tail=TRUE) {
   raw <- sum(sapply(0:x, dlu, m, n, k, psp))
@@ -203,10 +247,17 @@ server <- function(input, output, session) {
     validate(
       need(all((c(input$param, input$x) %% 1)==0), "Number of scouts/pulls must be an integer.")
     )
+    if (input$usesp) {
+      validate(
+        need(!is.na(input$sprate), "Fill in the required specific card rate."),
+        need(input$sprate<=100, "Specific card rate must not exceed 100%.")
+      )
+    }
     if (input$tab==5) {
       rate <- c(input$c.n, input$c.r, input$c.sr, input$c.ssr, input$c.ur)[which(rarities==input$rare)]/100
       validate(
-        need(!is.na(rate), "Fill in the required rate.")
+        need(!is.na(rate), "Fill in the required rate."),
+        need(all(rate<=100), "Rates must not exceed 100%.")
       )
     } else {
       rate <- filter(rt, type==input$tab, rarity==input$rare)[1,"rate"]
@@ -283,7 +334,8 @@ server <- function(input, output, session) {
   lu.result <- eventReactive(input$lu.submit, {
     vec <- c(input$lu.n, input$lu.r, input$lu.sr, input$lu.ssr, input$lu.ur)
     validate(
-      need(all((c(vec, input$lu.x) %% 1)==0), "Remaining cards and target value must be integers.")
+      need(all((c(vec, input$lu.x) %% 1)==0), "Remaining cards and target value must be integers."),
+      need((input$lu.param %% 1)==0, "Number of scouts must be an integer.")
     )
     total <- sum(vec)
     pool <- vec[which(c("N", "R", "SR", "SSR", "Ltd. UR")==input$lu.rare)]
@@ -305,7 +357,7 @@ server <- function(input, output, session) {
   #Third column
   #Step-Up guaranteed
   output$st.grnumentry <- renderUI({
-    numericInput("st.grnum", label="Number of guaranteed pulls of above rarity:", value=switch(input$st.gr, "nothing"=NA, 1), min=0, step=1)
+    numericInput("st.grnum", label="Number of guaranteed pulls of above rarity:", value=switch(input$st.gr, "nothing"=0, 1), min=0, step=1)
   })
   #Autofill custom rates
   observeEvent(input$st.auto, {
@@ -338,47 +390,21 @@ server <- function(input, output, session) {
   #Compute results
   st.result <- eventReactive(input$st.submit, {
     rv <- c(input$st.n, input$st.r, input$st.sr, input$st.ssr, input$st.ur)
-    index <- which(rarities==input$st.rare)
-    rate <- rv[index]
-    lowrate <- sum(rv[1:(index-1)])
     validate(
-      need(all(!is.na(c(rate, lowrate))), "Fill in the rates."),
+      need(all(!is.na(rv)), "Fill in the rates."),
+      need(all.equal(sum(abs(rv)), 100), "Rates must add to 100%."),
       need(all((c(input$st.grnum, input$st.x) %% 1)==0), "Number of guaranteed cards and target value must be integers.")
     )
-    p <- ifelse(input$st.usesp, input$stsprate/100, 1)*(rate/100)
+    rate <- rv[which(rarities==input$st.rare)]
+    p <- rate/100
     if (input$st.rule=="exactly equal to") {
-      raw <- dbinom(input$st.x, size=11, prob=p)
+      res <- dst(input$st.x, size=11, prob=p, gr=input$st.gr, gr.num=input$st.grnum, psp=ifelse(input$st.usesp, input$stsprate/100, 1))
     } else {
-      raw <- pbinom(input$st.x-switch(input$st.rule, "at least"=1, "at most"=0), size=11, prob=p, lower.tail=switch(input$st.rule, "at least"=FALSE, "at most"=TRUE))
+      res <- pst(input$st.x-switch(input$st.rule, "at least"=1, "at most"=0), size=11, prob=p, gr=input$st.gr, gr.num=input$st.grnum, psp=ifelse(input$st.usesp, input$stsprate/100, 1), lower.tail=switch(input$st.rule, "at least"=FALSE, "at most"=TRUE))
     }
-    if (input$st.gr==input$st.rare) {
-      grvec <- 1:input$st.grnum
-      sel <- switch(input$st.rule,
-                    "at least"=is_weakly_greater_than,
-                    "at most"=is_weakly_less_than,
-                    "exactly equal to"=equals)(grvec, input$st.x)
-      if (sum(sel)==0) return(raw)
-      key <- grvec[sel]-1
-      sel2 <- switch(input$st.rule,
-                           "at least"=is_weakly_greater_than,
-                           "at most"=is_weakly_less_than,
-                           "exactly equal to"=equals)(key, input$st.x)
-      adj <- ifelse(any(sel2), sum(dbinom(key[sel2], size=11, prob=p)), 0)
-      return(sum(c(raw, dbinom(key, size=11, prob=1-(lowrate/100)), -adj)))
-    } else if ((which(rarities==input$st.rare)<which(rarities==input$st.gr)) & input$st.gr!="nothing") {
-      grvec <- 12-(1:input$st.grnum)
-      sel <- switch(input$st.rule,
-                    "at least"=is_weakly_greater_than,
-                    "at most"=is_weakly_less_than,
-                    "exactly equal to"=equals)(grvec, input$st.x)
-      if (sum(sel)==0) return(raw)
-      rev <- sum(c(raw, -dbinom(grvec[sel], size=11, prob=p)))
-      return(ifelse(rev<10^(-9), 0, rev))
-    } else {
-      return(raw)
-    }
+    return(res)
   })
-  output$st.result <- reactive({paste0(st.result()*100, "% (exact by binomial distribution)")})
+  output$st.result <- reactive({paste0(st.result()*100, "% (exact by binomial/computed distribution)")})
 }
 
 shinyApp(ui=ui, server=server)
