@@ -1,9 +1,9 @@
 prob <- 0.15
 psp <- 0.8
-gr.num <- 1
+gr.num <- 0
 
 #Simulation
-runs <- 10000
+runs <- 100000
 sim_pulls <- numeric(runs)
 for (i in 1:runs) {
   pull <- rmultinom(1, size=11, prob=c(0, 0.8, 0.15, 0.04, 0.01))
@@ -14,4 +14,3 @@ for (i in 1:runs) {
   }
   sim_pulls[i] <- rbinom(1, size=res, prob=psp)
 }
-mean(sim_pulls>=3)
