@@ -7,6 +7,7 @@ rarities <- c("N", "R", "SR", "SSR", "UR")
 rt <- readRDS("data/rates.rds")
 #Functions to calculate negative binomials
 dsif <- function(x, size, prob, scout=11) {
+  if (x==0) return(0)
   partitions <- restrictedparts(size, x)
   first <- apply(partitions, 2, function(l) choose(x-1, sum(l==0)))
   ends <- apply(partitions, 2, function(k) unique(k[k!=0]))
@@ -26,7 +27,7 @@ dsif <- function(x, size, prob, scout=11) {
   return(sum(probs))
 }
 psif <- function(x, size, prob, scout=11, lower.tail=TRUE) {
-  raw <- sum(sapply(1:x, dsif, size, prob, scout))
+  raw <- sum(sapply(0:x, dsif, size, prob, scout))
   return(abs(ifelse(lower.tail, 0, 1)-raw))
 }
 #Functions to calculate step ups with specific cards
@@ -265,9 +266,9 @@ server <- function(input, output, session) {
     p <- ifelse(input$usesp, input$sprate/100, 1)*rate
     if (input$mode=="Scouting until a certain number of a specific card (or card rarity) is obtained.") {
       if (input$rule=="exactly equal to") {
-        res <- R.utils::withTimeout(dsif(input$x, size=input$param, prob=p), timeout=3, onTimeout="silent")
+        res <- R.utils::withTimeout(dsif(input$x, size=input$param, prob=p, scout=as.numeric(input$number)), timeout=3, onTimeout="silent")
       } else {
-        res <- R.utils::withTimeout(psif(input$x-switch(input$rule, "at least"=1, "at most"=0), size=input$param, prob=p, lower.tail=switch(input$rule, "at least"=FALSE, "at most"=TRUE)), timeout=3, onTimeout="silent")
+        res <- R.utils::withTimeout(psif(input$x-switch(input$rule, "at least"=1, "at most"=0), size=input$param, prob=p, scout=as.numeric(input$number), lower.tail=switch(input$rule, "at least"=FALSE, "at most"=TRUE)), timeout=3, onTimeout="silent")
       }
       if (!is.null(res)) {
         dsc("exact by computed distribution")
