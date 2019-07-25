@@ -2,13 +2,13 @@ library(magrittr)
 library(partitions)
 
 x <- 0
-gr <- "nothing"
+gr <- "SSR"
 size <- 11
-prob <- 0.04
+prob <- 0.15
 psp <- 1
 gr.num <- 3
 rv <- c(0, 80, 15, 4, 1)
-input <- list(st.rare="SSR")
+input <- list(st.rare="SR")
 
 rarities <- c("N", "R", "SR", "SSR", "UR")
 dst <- function(x, size, prob, gr="SR", gr.num=1, psp) {
@@ -55,21 +55,24 @@ pst <- function(x, size, prob, gr="SR", gr.num=1, psp, lower.tail=TRUE) {
   raw <- sum(sapply(0:x, dst, size=size, prob=prob, gr=gr, gr.num=gr.num, psp=psp))
   return(abs(ifelse(lower.tail, 0, 1)-raw))
 }
-pst(x, 11, prob, "SSR", gr.num=0, psp=1, lower.tail = F)
+
 #Simulation
 runs <- 100000
+all <- vector("list", runs)
 sim_pulls <- numeric(runs)
 for (i in 1:runs) {
   pull <- rmultinom(1, size=11, prob=c(0, 0.8, 0.15, 0.04, 0.01))
   if (sum(pull[4:5,])<gr.num) {
+    pull[2,1] <- pull[2,1]-(gr.num-sum(pull[3:5,]))
+    pull[4,1] <- gr.num
     res <- gr.num
   } else {
     res <- pull[4,1]
   }
+  all[[i]] <- pull
   sim_pulls[i] <- rbinom(1, size=res, prob=psp)
 }
-#allcomb <- Reduce(cbind, all)
-#allcomb[,allcomb[3,]==0]
+allcomb <- Reduce(cbind, all)
 
 sapply(0:6, dst, size=size, prob=prob, gr=gr, gr.num=gr.num, psp=psp)
 sapply(0:6, function(i) mean(sim_pulls==i))

@@ -31,9 +31,9 @@ psif <- function(x, size, prob, scout=11, lower.tail=TRUE) {
   return(abs(ifelse(lower.tail, 0, 1)-raw))
 }
 #Functions to calculate step ups with specific cards
-dst <- function(x, size, prob, gr="SR", gr.num=1, psp) {
+dst <- function(x, size, prob, target, gr="SR", gr.num=1, rv, psp) {
   key <- x:size
-  index <- ifelse(gr=="nothing", Inf, which(rarities==input$st.rare))
+  index <- ifelse(gr=="nothing", Inf, which(rarities==target))
   grindex <- ifelse(gr=="nothing", 0, which(rarities==gr))
   raw <- dbinom(key, size, prob)
   spec <- dbinom(x, size=key, prob=psp)
@@ -71,8 +71,8 @@ dst <- function(x, size, prob, gr="SR", gr.num=1, psp) {
     return(sum(raw*keep*spec))
   }
 }
-pst <- function(x, size, prob, gr="SR", gr.num=1, psp, lower.tail=TRUE) {
-  raw <- sum(sapply(0:x, dst, size=size, prob=prob, gr=gr, gr.num=gr.num, psp=psp))
+pst <- function(x, size, prob, target, gr="SR", gr.num=1, rv, psp, lower.tail=TRUE) {
+  raw <- sum(sapply(0:x, dst, size=size, prob=prob, target=target, gr=gr, gr.num=gr.num, rv=rv, psp=psp))
   return(abs(ifelse(lower.tail, 0, 1)-raw))
 }
 #Functions for getting a specific card in the Ltd UR box
@@ -399,9 +399,9 @@ server <- function(input, output, session) {
     rate <- rv[which(rarities==input$st.rare)]
     p <- rate/100
     if (input$st.rule=="exactly equal to") {
-      res <- dst(input$st.x, size=11, prob=p, gr=input$st.gr, gr.num=input$st.grnum, psp=ifelse(input$st.usesp, input$stsprate/100, 1))
+      res <- dst(input$st.x, size=11, prob=p, gr=input$st.gr, target=input$st.rare, gr.num=input$st.grnum, rv=rv, psp=ifelse(input$st.usesp, input$stsprate/100, 1))
     } else {
-      res <- pst(input$st.x-switch(input$st.rule, "at least"=1, "at most"=0), size=11, prob=p, gr=input$st.gr, gr.num=input$st.grnum, psp=ifelse(input$st.usesp, input$stsprate/100, 1), lower.tail=switch(input$st.rule, "at least"=FALSE, "at most"=TRUE))
+      res <- pst(input$st.x-switch(input$st.rule, "at least"=1, "at most"=0), size=11, prob=p, target=input$st.rare, gr=input$st.gr, gr.num=input$st.grnum, rv=rv, psp=ifelse(input$st.usesp, input$stsprate/100, 1), lower.tail=switch(input$st.rule, "at least"=FALSE, "at most"=TRUE))
     }
     return(res)
   })
