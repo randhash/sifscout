@@ -1,19 +1,20 @@
 library(magrittr)
 library(partitions)
 
+rarities <- c("N", "R", "SR", "SSR", "UR")
 x <- 0
 gr <- "SSR"
 size <- 11
-prob <- 0.15
 psp <- 1
-gr.num <- 3
-rv <- c(0, 80, 15, 4, 1)
-input <- list(st.rare="SR")
+gr.num <- 11
+rv <- c(0, 80, 15, 4, 1)/100
+target <- "SR"
+prob <- rv[which(rarities==target)]
 
-rarities <- c("N", "R", "SR", "SSR", "UR")
-dst <- function(x, size, prob, gr="SR", gr.num=1, psp) {
+dst <- function(x, size, prob, target, gr="SR", gr.num=1, rv, psp) {
+  if (x<0|x>size) return(0)
   key <- x:size
-  index <- ifelse(gr=="nothing", Inf, which(rarities==input$st.rare))
+  index <- ifelse(gr=="nothing", Inf, which(rarities==target))
   grindex <- ifelse(gr=="nothing", 0, which(rarities==gr))
   raw <- dbinom(key, size, prob)
   spec <- dbinom(x, size=key, prob=psp)
@@ -21,7 +22,7 @@ dst <- function(x, size, prob, gr="SR", gr.num=1, psp) {
     return(sum(raw*spec))
   } else if (index==grindex) {
     raw[key<gr.num] <- 0
-    lower <- sum(rv[1:(index-1)])/100
+    lower <- sum(rv[1:(index-1)])
     higher <- 1-prob-lower
     #Partitions for the conditions that permit you to pull below guaranteed because you pulled better
     adj1v <- rep(0, times=length(raw))
@@ -47,33 +48,52 @@ dst <- function(x, size, prob, gr="SR", gr.num=1, psp) {
     }
     return(sum((raw+adj1v+adj2v)*spec))
   } else {
-    keep <- key<(size-gr.num+1)
-    return(sum(raw*keep*spec))
+    adjv <- rep(0, length(key))
+    higher <- sum(rv[grindex:length(rv)])
+    lh <- 1-higher-prob
+    depth <- size:(size-gr.num)
+    if (any(depth==0)) {
+      depth <- depth[depth!=0]
+      prt <- Reduce(cbind, c(list(matrix(rep(0, 2), ncol=1, nrow=2)), lapply(depth, restrictedparts, 2)))
+    } else {
+      prt <- Reduce(cbind, lapply(depth, restrictedparts, 2))
+    }
+    prt <- cbind(prt, prt[2:1,prt[1,]!=prt[2,]])
+    prt <- rbind(prt, size-colSums(prt))
+    grp <- prt[1,]-(gr.num-prt[3,])
+    grp <- ifelse(grp<0, 0, grp)
+    prt <- prt[,grp>=x]
+    adj <- split(apply(prt, 2, function(k) dmultinom(k, prob=c(prob, lh, higher))), grp[grp>=x]) %>% sapply(sum)
+    repl <- which(key %in% as.numeric(names(adj)))
+    if (length(repl)>0) adjv[repl] <- adj
+    return(sum(adjv*spec))
   }
 }
-pst <- function(x, size, prob, gr="SR", gr.num=1, psp, lower.tail=TRUE) {
-  raw <- sum(sapply(0:x, dst, size=size, prob=prob, gr=gr, gr.num=gr.num, psp=psp))
-  return(abs(ifelse(lower.tail, 0, 1)-raw))
+pst <- function(x, size, prob, target, gr="SR", gr.num=1, rv, psp, lower.tail=TRUE) {
+  if (lower.tail) {
+    raw <- sum(sapply(0:x, dst, size=size, prob=prob, target=target, gr=gr, gr.num=gr.num, rv=rv, psp=psp))
+  } else {
+    raw <- sum(sapply((x+1):size, dst, size=size, prob=prob, target=target, gr=gr, gr.num=gr.num, rv=rv, psp=psp))
+  }
+  return(raw)
 }
 
 #Simulation
-runs <- 100000
-all <- vector("list", runs)
+runs <- 5000000
 sim_pulls <- numeric(runs)
+grindex <- which(rarities==gr)
+index <- which(rarities==target)
 for (i in 1:runs) {
   pull <- rmultinom(1, size=11, prob=c(0, 0.8, 0.15, 0.04, 0.01))
-  if (sum(pull[4:5,])<gr.num) {
-    pull[2,1] <- pull[2,1]-(gr.num-sum(pull[3:5,]))
-    pull[4,1] <- gr.num
-    res <- gr.num
+  if (sum(pull[grindex:5,])<gr.num) {
+    res <- pull[index,1]-(gr.num-sum(pull[grindex:5,]))
+    res <- ifelse(res<0, 0, res)
   } else {
-    res <- pull[4,1]
+    res <- pull[index,1]
   }
-  all[[i]] <- pull
   sim_pulls[i] <- rbinom(1, size=res, prob=psp)
 }
-allcomb <- Reduce(cbind, all)
 
-sapply(0:6, dst, size=size, prob=prob, gr=gr, gr.num=gr.num, psp=psp)
-sapply(0:6, function(i) mean(sim_pulls==i))
+sapply(0:11, dst, size=size, prob=prob, gr=gr, target=target, gr.num=gr.num, rv=rv, psp=psp)
+sapply(0:11, function(i) mean(sim_pulls==i))
 

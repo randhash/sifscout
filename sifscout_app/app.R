@@ -7,7 +7,7 @@ rarities <- c("N", "R", "SR", "SSR", "UR")
 rt <- readRDS("data/rates.rds")
 #Functions to calculate negative binomials
 dsif <- function(x, size, prob, scout=11) {
-  if (x==0) return(0)
+  if (x<1) return(0)
   partitions <- restrictedparts(size, x)
   first <- apply(partitions, 2, function(l) choose(x-1, sum(l==0)))
   ends <- apply(partitions, 2, function(k) unique(k[k!=0]))
@@ -30,8 +30,10 @@ psif <- function(x, size, prob, scout=11, lower.tail=TRUE) {
   raw <- sum(sapply(0:x, dsif, size, prob, scout))
   return(abs(ifelse(lower.tail, 0, 1)-raw))
 }
+
 #Functions to calculate step ups with specific cards
 dst <- function(x, size, prob, target, gr="SR", gr.num=1, rv, psp) {
+  if (x<0|x>size) return(0)
   key <- x:size
   index <- ifelse(gr=="nothing", Inf, which(rarities==target))
   grindex <- ifelse(gr=="nothing", 0, which(rarities==gr))
@@ -41,7 +43,7 @@ dst <- function(x, size, prob, target, gr="SR", gr.num=1, rv, psp) {
     return(sum(raw*spec))
   } else if (index==grindex) {
     raw[key<gr.num] <- 0
-    lower <- sum(rv[1:(index-1)])/100
+    lower <- sum(rv[1:(index-1)])
     higher <- 1-prob-lower
     #Partitions for the conditions that permit you to pull below guaranteed because you pulled better
     adj1v <- rep(0, times=length(raw))
@@ -67,19 +69,45 @@ dst <- function(x, size, prob, target, gr="SR", gr.num=1, rv, psp) {
     }
     return(sum((raw+adj1v+adj2v)*spec))
   } else {
-    keep <- key<(size-gr.num+1)
-    return(sum(raw*keep*spec))
+    adjv <- rep(0, length(key))
+    higher <- sum(rv[grindex:length(rv)])
+    lh <- 1-higher-prob
+    depth <- size:(size-gr.num)
+    if (any(depth==0)) {
+      depth <- depth[depth!=0]
+      prt <- Reduce(cbind, c(list(matrix(rep(0, 2), ncol=1, nrow=2)), lapply(depth, restrictedparts, 2)))
+    } else {
+      prt <- Reduce(cbind, lapply(depth, restrictedparts, 2))
+    }
+    prt <- cbind(prt, prt[2:1,prt[1,]!=prt[2,]])
+    prt <- rbind(prt, size-colSums(prt))
+    grp <- prt[1,]-(gr.num-prt[3,])
+    grp <- ifelse(grp<0, 0, grp)
+    prt <- prt[,grp>=x]
+    adj <- split(apply(prt, 2, function(k) dmultinom(k, prob=c(prob, lh, higher))), grp[grp>=x]) %>% sapply(sum)
+    repl <- which(key %in% as.numeric(names(adj)))
+    if (length(repl)>0) adjv[repl] <- adj
+    return(sum(adjv*spec))
   }
 }
 pst <- function(x, size, prob, target, gr="SR", gr.num=1, rv, psp, lower.tail=TRUE) {
-  raw <- sum(sapply(0:x, dst, size=size, prob=prob, target=target, gr=gr, gr.num=gr.num, rv=rv, psp=psp))
-  return(abs(ifelse(lower.tail, 0, 1)-raw))
+  if (lower.tail) {
+    raw <- sum(sapply(0:x, dst, size=size, prob=prob, target=target, gr=gr, gr.num=gr.num, rv=rv, psp=psp))
+  } else {
+    raw <- sum(sapply((x+1):size, dst, size=size, prob=prob, target=target, gr=gr, gr.num=gr.num, rv=rv, psp=psp))
+  }
+  return(raw)
 }
+
 #Functions for getting a specific card in the Ltd UR box
 dlu <- function(x, m, n, k, psp) sum(dhyper(x:k, m=m, n=n, k=k)*dbinom(x, size=x:k, prob=psp))
 plu <- function(x, m, n, k, psp, lower.tail=TRUE) {
-  raw <- sum(sapply(0:x, dlu, m, n, k, psp))
-  return(abs(ifelse(lower.tail, 0, 1)-raw))
+  if (lower.tail) {
+    raw <- sum(sapply(0:x, dlu, m, n, k, psp))
+  } else {
+    raw <- sum(sapply((x+1):m, dlu, m, n, k, psp))
+  }
+  return(raw)
 }
 
 ui <- fluidPage(
@@ -393,15 +421,15 @@ server <- function(input, output, session) {
     rv <- c(input$st.n, input$st.r, input$st.sr, input$st.ssr, input$st.ur)
     validate(
       need(all(!is.na(rv)), "Fill in the rates."),
-      need(all.equal(sum(abs(rv)), 100), "Rates must add to 100%."),
+      need(isTRUE(all.equal(sum(abs(rv)), 100)), "Rates must add to 100%."),
       need(all((c(input$st.grnum, input$st.x) %% 1)==0), "Number of guaranteed cards and target value must be integers.")
     )
     rate <- rv[which(rarities==input$st.rare)]
     p <- rate/100
     if (input$st.rule=="exactly equal to") {
-      res <- dst(input$st.x, size=11, prob=p, gr=input$st.gr, target=input$st.rare, gr.num=input$st.grnum, rv=rv, psp=ifelse(input$st.usesp, input$stsprate/100, 1))
+      res <- dst(input$st.x, size=11, prob=p, gr=input$st.gr, target=input$st.rare, gr.num=input$st.grnum, rv=rv/100, psp=ifelse(input$st.usesp, input$stsprate/100, 1))
     } else {
-      res <- pst(input$st.x-switch(input$st.rule, "at least"=1, "at most"=0), size=11, prob=p, target=input$st.rare, gr=input$st.gr, gr.num=input$st.grnum, rv=rv, psp=ifelse(input$st.usesp, input$stsprate/100, 1), lower.tail=switch(input$st.rule, "at least"=FALSE, "at most"=TRUE))
+      res <- pst(input$st.x-switch(input$st.rule, "at least"=1, "at most"=0), size=11, prob=p, target=input$st.rare, gr=input$st.gr, gr.num=input$st.grnum, rv=rv/100, psp=ifelse(input$st.usesp, input$stsprate/100, 1), lower.tail=switch(input$st.rule, "at least"=FALSE, "at most"=TRUE))
     }
     return(res)
   })
