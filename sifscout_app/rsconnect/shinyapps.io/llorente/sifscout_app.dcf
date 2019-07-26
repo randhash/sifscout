@@ -5,6 +5,6 @@ account: llorente
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 1043778
-bundleId: 2265051
+bundleId: 2266154
 url: https://llorente.shinyapps.io/sifscout_app/
-when: 1564082880.70864
+when: 1564110817.48702

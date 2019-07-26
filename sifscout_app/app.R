@@ -72,7 +72,7 @@ dst <- function(x, size, prob, target, gr="SR", gr.num=1, rv, psp) {
     adjv <- rep(0, length(key))
     higher <- sum(rv[grindex:length(rv)])
     lh <- 1-higher-prob
-    depth <- size:(size-gr.num)
+    depth <- 11-key #sums of non-low cards
     if (any(depth==0)) {
       depth <- depth[depth!=0]
       prt <- Reduce(cbind, c(list(matrix(rep(0, 2), ncol=1, nrow=2)), lapply(depth, restrictedparts, 2)))
@@ -80,8 +80,8 @@ dst <- function(x, size, prob, target, gr="SR", gr.num=1, rv, psp) {
       prt <- Reduce(cbind, lapply(depth, restrictedparts, 2))
     }
     prt <- cbind(prt, prt[2:1,prt[1,]!=prt[2,]])
-    prt <- rbind(prt, size-colSums(prt))
-    grp <- prt[1,]-(gr.num-prt[3,])
+    prt <- rbind(size-colSums(prt), prt)
+    grp <- ifelse(prt[3,]>=gr.num, prt[1,], prt[1,]-(gr.num-prt[3,]))
     grp <- ifelse(grp<0, 0, grp)
     prt <- prt[,grp>=x]
     adj <- split(apply(prt, 2, function(k) dmultinom(k, prob=c(prob, lh, higher))), grp[grp>=x]) %>% sapply(sum)

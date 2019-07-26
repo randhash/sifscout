@@ -1,0 +1,10 @@
+name: sifscout_app
+title:
+username:
+account: randhash
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 1051999
+bundleId: 2266172
+url: https://randhash.shinyapps.io/sifscout_app/
+when: 1564111641.0501
